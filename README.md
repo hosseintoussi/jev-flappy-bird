@@ -1,106 +1,126 @@
 # Jev Plays Flappy Bird
 
-A live demo of TypeSafe's **Jev** (a System One model) playing Flappy Bird using only repeated, tiny semantic decisions. Every flap comes from a Jev response. There is no fallback player.
+A live demo of [TypeSafe](https://docs.typesafe.ai)'s **Jev** model playing Flappy Bird.
+
+About three times a second, the game asks Jev one question: flap or wait? Jev answers, and the bird does what it says. Nothing else controls the bird. If Jev stops answering, the bird falls.
 
 ```
-game state ──► POST /api/decide ──► Jev (Choice: FLAP | WAIT) ──► the bird flaps once on FLAP
-        (the canvas keeps rendering on its own clock and never waits for Jev)
+game state ──► local server ──► Jev picks FLAP or WAIT ──► the bird flaps once on FLAP
 ```
+
+The game never waits for Jev. It keeps running while the answer is on its way.
 
 ## Setup
 
-Requires Node 20+.
+You need Node 20 or newer and a TypeSafe API key.
 
 ```sh
 npm install
-cp .env.example .env      # then paste your key from https://console.typesafe.ai/keys
-npm run dev               # http://localhost:5173
+cp .env.example .env      # paste your key from https://console.typesafe.ai/keys
+npm run dev               # open http://localhost:5173
 ```
 
-The API key lives only in the local Node endpoint (`server/jev.ts`, mounted into Vite's dev/preview server). It is never sent to the browser. `npm run build && npm run preview` also works.
+Press **Space** to start.
 
-| Env var | Default | |
+Your API key stays on the local server (`server/jev.ts`). It is never sent to the browser. `.env` is git-ignored.
+
+| Setting in `.env` | Default | What it does |
 | --- | --- | --- |
-| `TYPESAFE_API_KEY` | – | required |
-| `TYPESAFE_DEFAULT_MODEL` | `jev-latest` | pin e.g. `jev-1.13.0` for reproducible runs |
-| `JEV_TIMEOUT_MS` | `2000` | a slower decision counts as an error |
+| `TYPESAFE_API_KEY` | none | Required. |
+| `TYPESAFE_DEFAULT_MODEL` | `jev-latest` | Pin a version, like `jev-1.13.0`, for repeatable runs. |
+| `JEV_TIMEOUT_MS` | `2000` | An answer slower than this counts as an error. |
 
-## How Jev is used
+## How it works
 
-- **Primitive:** a two-option [Choice](https://docs.typesafe.ai/primitives/choice) (`FLAP` / `WAIT`) via `@typesafe-ai/sdk`: `client.systemOne({ state, questions: { action: choice(...) } })`. Jev returns the selected option, a probability for each option, and a `confidence`. The app uses `choice` exactly as returned. **There is no threshold or decision rule in app code.**
-- **Question** (`src/question.ts`): *"What should the bird do right now to pass safely through the gap of the next pipe?"* with a description for each option.
-- **State** (`src/game.ts`, `observe()`): bird `y` and `velocity_y`, next-pipe distance and gap top/bottom, the pixel clearance from the bird to each gap edge, and the same position/motion restated as plain words (`"inside the gap, lower half"`, `"falling"`). Clearances run from the bird's edges (0 = touching the pipe). These are measurements only: the subtractions are done in code because the [jaggedness notes](https://docs.typesafe.ai/model-jaggedness/jev-1.13) say Jev is weak at arithmetic and better on semantic than numeric input. Nothing in the state says what to do.
-- **Latency lead** (on by default, debug toggle): the state is measured as it will be one round trip from now if the bird is left alone, which is the moment Jev's answer can land. The scroll is constant and only one request is in flight, so nothing else can change the bird in between. It is the same measurement taken at the time it matters; Jev still makes every decision. The lead is a running average of the measured round trip and is logged per decision (`leadMs`).
-- **Cadence:** one request in flight at a time, started at most every `interval` ms (default 100). Each FLAP response applies exactly one flap impulse. Rendering is independent of API latency.
-- **Retries are off** (`maxRetries: 0`): a retried decision is a stale decision.
+**The question.** Jev gets one multiple-choice question with two options, `FLAP` and `WAIT`. Each option has a short description of when it applies. The question lives in `src/question.ts`. It uses TypeSafe's [Choice](https://docs.typesafe.ai/primitives/choice) question type.
 
-### Difficulty ramp, and why the bird floats
+**What Jev sees.** With each question, the game sends a small snapshot:
 
-Jev's answer takes about **280ms** end to end here, so it makes about 3.5 decisions per second. The **bird's vertical physics run on a slower clock** than the scroll (`BIRD_TIME` in `src/game.ts`, 0.5), so each flap lasts long enough for a 280ms decision to matter.
+- where the bird is and how fast it is moving
+- how far away the next pipe is, and where its gap starts and ends
+- how much room the bird has above and below it
+- the same facts in plain words, like "inside the gap, lower half" and "falling"
 
-**The game starts brisk and gets harder with every pipe for the first 30, then stays there; it resets on death** ("Difficulty ramp" in debug; the current speed is on the canvas and in telemetry). The main lever is the **height difference between one gap and the next**:
+The snapshot only describes the scene. It never tells Jev what to do. The code that builds it is `observe()` in `src/game.ts`.
 
-| | first pipe | pipe 30+ |
-| --- | --- | --- |
-| scroll speed | 1.3x | 1.9x |
-| pipe to pipe | 340px | 295px |
-| open air between pipes | ~1.4s | ~0.8s |
-| height change, gap to gap | 50 - 110px | 60 - 90px |
-| share of the bird's reach that demands | 30 - 55% | 65 - 95% |
-| gap height | 195px | 180px |
+**What the app does with the answer.** It uses Jev's choice exactly as returned. There are no thresholds, no backup rules, and no retries. A retried answer would arrive too late to be useful.
 
-The bird's physics never change, so how far it can climb or drop between two pipes is fixed by the open air between them, and faster, closer pipes nearly halve that time. Each pipe demands a share of the remaining reach, in a random direction (`START` / `END` in `src/game.ts`). The height changes stay about the same size in pixels while the time to make them shrinks; near 100% the bird has to start moving the moment it clears a pipe and cannot afford a wasted decision, so Jev can and eventually does die at the top level. The debug speed slider still scales the whole game, bird included.
+**Dealing with delay.** Each answer takes about 280ms to come back. By then the bird has moved. So the game describes the scene as it will look when the answer arrives, assuming the bird is left alone. Jev still makes every decision. You can turn this off in the debug menu ("Latency lead") to see the difference.
 
-Earlier tunings, measured headless against the live API (same `Game` class, real time, one decision in flight):
+**Why the bird floats.** The bird rises and falls more slowly than in the original game. This gives each decision time to matter when only three or four arrive per second.
 
-| setup | runs | pipes passed | deaths |
-| --- | --- | --- | --- |
-| before: old question, no lead, fixed 1x, gaps up to 190px apart | 2 x 120s | 82 | 14 |
-| new question + latency lead, fixed 1x, small height changes | 2 x 150s | 124 | 0 |
+## Difficulty
 
-At fixed 1x, each fix alone did not do it (in 150s: new question without lead died 7 - 10 times, lead with the old question 5 times); together they did. The current height-difference ramp has only had a short sanity run, not a long measurement. Each decision costs about 500 input tokens, so a minute of play is roughly 105k tokens, or about $0.26 an hour.
+The game gets harder with every pipe for the first 30 pipes. Then it stays at that level. It resets when the bird dies.
 
-What was killing it, from the decision logs: almost every death came right after a pipe whose successor's gap was lower. The bird sat "above the gap", and either could not fall far enough in time (gap offsets of up to 190px were not actually reachable), or Jev answered FLAP at P~0.5 because the old FLAP option mentioned "falling fast" and flapped into the upper pipe. Stale state made both worse: a decision lands ~280ms after it was asked.
+As it gets harder:
 
-Things that helped, all in the question or state (not in code that plays): option wording that uses the same words as the state's position label, describing options by where the bird is relative to the gap (an earlier "falling toward the bottom" wording made Jev flap whenever the bird was falling, even above the gap), edge-based clearance measurements, plain-word labels, and the latency lead. The game also has a terminal fall speed, like the original, so one late decision is not fatal.
+- the world scrolls faster
+- the pipes move closer together
+- the gaps get a little smaller
+- each gap sits higher or lower than the last, with less time to get there
 
-### What is and isn't real
+The last one matters most. The bird's flying never changes, so less time between pipes means less room for a wasted decision. At the top level Jev will die now and then.
 
-- Probability and confidence come straight from the Choice response. Nothing is fabricated.
-- Latency: measured on the local server around the SDK call (`jevLatencyMs`, includes the network to TypeSafe). The browser round trip is logged too (`roundTripMs`).
-- Tokens: `usage.input_tokens` / `output_tokens` come from the API response.
-- **Est. cost** is calculated, not returned by the API: `input_tokens x $0.042 / 1M` from the public [Models](https://docs.typesafe.ai/models) page (Jev 1.13; output tokens free). Check that page for current pricing.
-- **JEV OFFLINE** appears on any error (missing key, 429, timeout, connection failure). The bird just stops getting input. API errors are counted in telemetry.
+You can tune all of this in `START` and `END` near the top of `src/game.ts`.
+
+## What helped Jev play well
+
+All of these are changes to what Jev is asked or shown. None of them is code that plays the game.
+
+- **Matching words.** The answer options use the same words as the snapshot, such as "upper half of the gap". Jev did much worse when they didn't match.
+- **Say where the bird is, not what physics will do.** An early option mentioned "falling fast". Jev then flapped whenever the bird fell fast, even when it was above the gap and needed to fall.
+- **Plain words next to the numbers.** Jev handles "below the gap" better than raw coordinates. You can turn the words off in the debug menu to compare.
+- **Do the math in code.** The game works out the room above and below the bird, so Jev doesn't have to subtract.
+- **Describe the moment the answer lands.** See "Dealing with delay" above.
+- **A fair course.** Every gap can be reached from the one before it in the time available.
+
+Before these changes Jev died every 15 to 30 seconds. With them it played for minutes without dying on the same kind of course. That is why the course now gets harder as it goes.
+
+## The side panel
+
+- **Latency** is measured on the local server around each call to Jev. The panel shows the last, average, and slow-end (95th percentile) values, plus the full round trip from the browser.
+- **Tokens** come straight from the API response.
+- **Est. cost** is worked out by the app, not reported by the API. It is input tokens × $0.042 per million, from TypeSafe's public [pricing](https://docs.typesafe.ai/models) for Jev 1.13. Output tokens are free. Check that page for current prices.
+- **Play time** only counts time spent playing. Pauses don't count.
+- Each decision uses about 500 input tokens. That comes to roughly a quarter of a dollar per hour of play.
+- **JEV OFFLINE** appears on any error, such as a missing key, a timeout, or a rate limit. The bird gets no input until Jev is back.
 
 ## Controls
 
-The game never auto-starts: on load (and reload) it waits on a **Ready** screen until you press **Space**. Space then pauses and resumes. After a death it restarts by itself after ~700ms.
+The game waits on a **Ready** screen until you press **Space**. After that, Space pauses and resumes. After a death the game restarts by itself.
 
-Open **debug** (bottom-right): decision interval, game speed, difficulty ramp and latency lead toggles, pause/resume (also **Space**), restart, reset stats, toggle telemetry and the decision stream, **Export JSON**.
+Click **debug** in the bottom-right corner for more:
 
-"Describe state in words too" (on by default) adds the plain-language labels (`"below the gap"`, `"falling"`) to the state sent to Jev. Turn it off to see Jev work from the numbers alone (it does noticeably worse).
+- how often to ask Jev
+- game speed
+- difficulty ramp on or off
+- latency lead on or off
+- plain-word descriptions on or off
+- restart, reset stats, show or hide parts of the panel
+- **Export JSON**
 
-## Session log
+**Export JSON** downloads the full session. For every decision it includes what Jev was shown, what it chose, how sure it was, how long it took, and the tokens used. It also lists every API error and a summary.
 
-**Export JSON** downloads the whole session: per decision, the timestamp, the exact state sent and its `leadMs`, Jev's choice, probabilities and confidence, latency, tokens, model, request id, score, whether it was applied, and `diedAfterMs` (set on every decision of an attempt that ended in death), plus all API errors and a summary.
-
-## Layout
+## Project layout
 
 ```
-server/jev.ts     POST /api/decide → TypeSafe SDK (key stays here)
-src/question.ts   the Choice question
-src/game.ts       physics, pipes, collisions, canvas drawing (no decision logic)
-src/session.ts    decision loop, telemetry, log/export
-src/App.tsx       layout, telemetry panel, stream, debug drawer
+server/jev.ts     local endpoint that calls Jev (the API key stays here)
+src/question.ts   the question Jev is asked
+src/game.ts       physics, pipes, collisions, drawing (no decision logic)
+src/session.ts    the decision loop, stats, and export
+src/App.tsx       page layout, side panel, debug menu
 ```
 
-Recording tip: the game and panel form one block centered in the window (about 950×720). Crop to it, and the debug drawer stays out of frame.
+Recording tip: the game and panel sit together in the middle of the window, about 950×720. Crop to that and the debug menu stays out of frame.
 
 ## Contributing
 
-Issues and pull requests are welcome. `npm run build` (typecheck + production build) is what CI runs and needs no API key. Running the game itself needs your own TypeSafe key in `.env`, which is git-ignored; never commit it.
+Issues and pull requests are welcome.
 
-The one rule of the demo: app code must not play the game. Changes to what Jev is asked (`src/question.ts`) or shown (`observe()` in `src/game.ts`) are fair; thresholds, fallbacks or any local flap logic are not.
+`npm run build` checks types and builds the app. CI runs the same command, and it needs no API key. To run the game you need your own TypeSafe key in `.env`. Never commit it.
+
+One rule: **app code must not play the game.** Changing what Jev is asked or shown is fine. Thresholds, fallbacks, or any local flap logic are not.
 
 ## License
 
