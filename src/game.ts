@@ -26,13 +26,23 @@ const HIT_R = BIRD_R - 2; // slightly forgiving hitbox
 // that physical reach a pipe may demand: [least, most]. Near 1 the bird has to start moving as
 // soon as it clears a pipe and cannot afford a wasted decision.
 const RAMP_PIPES = 30;
-const START = { pace: 1.3, spacing: 340, gap: 195, climb: [0.3, 0.55] }; // spacing: px pipe to pipe
+const START = { pace: 1.3, spacing: 340, gap: 195, climb: [0.3, 0.55] }; // spacing: px pipe to pipe; gap: px tall
 const END = { pace: 1.9, spacing: 295, gap: 180, climb: [0.65, 0.95] };
 const FLAP_PERIOD = 0.3; // s between flaps when climbing, about one Jev round trip
 const REACTION = 0.35; // s before a climb can start
 const REACH_MARGIN = 20; // px kept clear of the gap edge when sizing gap offsets
 const RESTART_MS = 700;
-const STEP = 1 / 120;
+const STEP = 1 / 120; // s, fixed physics step
+const MAX_FRAME = 0.05; // s, longest frame the simulation will try to catch up on
+
+type Level = typeof START;
+
+/** One physics step for a live bird: gravity, terminal velocity, and the ceiling. */
+function fall(y: number, vy: number, dt: number): [y: number, vy: number] {
+  vy = Math.min(MAX_FALL, vy + GRAVITY * dt * BIRD_TIME);
+  y += vy * dt * BIRD_TIME;
+  return y < BIRD_R ? [BIRD_R, Math.max(0, vy)] : [y, vy];
+}
 
 interface Pipe {
   x: number;
@@ -67,7 +77,7 @@ interface Puff {
 }
 
 export class Game {
-  birdY = H / 2;
+  birdY = 0;
   birdVy = 0;
   pipes: Pipe[] = [];
   score = 0;
@@ -77,7 +87,6 @@ export class Game {
   speed = 1;
   ramp = true; // difficulty rises with the score; off = stay at START
   pace = START.pace;
-  tune = { start: { ...START }, end: { ...END } };
   playedMs = 0; // wall-clock time spent actually playing (not paused, not in a hidden tab)
   offline = false;
   events: GameEvents = {};
@@ -97,7 +106,7 @@ export class Game {
     this.birdVy = 0;
     this.pipes = [];
     this.score = 0;
-    this.pace = this.tune.start.pace;
+    this.pace = START.pace;
     this.dead = false;
     this.deadFor = 0;
     this.puffs = [];
@@ -125,15 +134,10 @@ export class Game {
     let shift = 0;
     for (let t = (leadMs / 1000) * this.speed; t > 0; t -= STEP) {
       const dt = Math.min(STEP, t);
-      birdVy = Math.min(MAX_FALL, birdVy + GRAVITY * dt * BIRD_TIME);
-      birdY += birdVy * dt * BIRD_TIME;
-      if (birdY < BIRD_R) {
-        birdY = BIRD_R;
-        birdVy = Math.max(0, birdVy);
-      }
-      birdY = Math.min(GROUND_Y - BIRD_R, birdY);
+      [birdY, birdVy] = fall(birdY, birdVy, dt);
       shift += PIPE_SPEED * this.pace * dt;
     }
+    birdY = Math.min(GROUND_Y - BIRD_R, birdY);
     const pipe = this.nextPipe(shift);
     if (!pipe) return null;
     const y = Math.round(birdY);
@@ -173,8 +177,9 @@ export class Game {
 
   update(frameDt: number) {
     if (this.paused) return;
-    this.playedMs += Math.min(frameDt, 0.05) * 1000;
-    this.acc += Math.min(frameDt, 0.05) * this.speed;
+    const dt = Math.min(frameDt, MAX_FRAME);
+    this.playedMs += dt * 1000;
+    this.acc += dt * this.speed;
     while (this.acc >= STEP) {
       this.acc -= STEP;
       this.step(STEP);
@@ -186,53 +191,50 @@ export class Game {
     return this.pipes.find((p) => p.x - shift + PIPE_W > BIRD_X - BIRD_R);
   }
 
-  /** Pace, spacing, gap height and demanded share of reach once `score` pipes have been passed. */
-  private levelAt(score: number) {
+  /** The difficulty settings once `score` pipes have been passed. */
+  private levelAt(score: number): Level {
     const f = this.ramp ? Math.min(1, score / RAMP_PIPES) : 0;
-    const { start, end } = this.tune;
     const mix = (a: number, b: number) => a + (b - a) * f;
-    const pace = mix(start.pace, end.pace);
-    const spacing = mix(start.spacing, end.spacing);
     return {
-      pace,
-      spacing,
-      air: (spacing - PIPE_W - 2 * BIRD_R) / (PIPE_SPEED * pace), // s of open air between pipes
-      gap: mix(start.gap, end.gap),
-      climb: [mix(start.climb[0], end.climb[0]), mix(start.climb[1], end.climb[1])],
+      pace: mix(START.pace, END.pace),
+      spacing: mix(START.spacing, END.spacing),
+      gap: mix(START.gap, END.gap),
+      climb: [mix(START.climb[0], END.climb[0]), mix(START.climb[1], END.climb[1])],
     };
+  }
+
+  /** How far (px) a bird cruising at mid-gap can climb or drop before the next pipe arrives. */
+  private reach(level: Level) {
+    const air = (level.spacing - PIPE_W - 2 * BIRD_R) / (PIPE_SPEED * level.pace); // s between pipes
+    const slack = level.gap / 2 - HIT_R - REACH_MARGIN; // it may end up anywhere inside the next gap
+    // Down: it just stops flapping and falls.
+    let [y, vy] = [GROUND_Y, 0];
+    for (let t = air - REACTION / 2; t > 0; t -= STEP) [y, vy] = fall(y, vy, STEP);
+    // Up: it keeps falling for REACTION, then climbs one flap per FLAP_PERIOD.
+    const tf = FLAP_PERIOD * BIRD_TIME;
+    const climbRate = -(FLAP_VY * tf + (GRAVITY * tf * tf) / 2) / FLAP_PERIOD;
+    const tr = REACTION * BIRD_TIME;
+    const rise = climbRate * (air - REACTION) - (GRAVITY * tr * tr) / 2;
+    return { up: slack + rise, down: slack + (y - GROUND_Y) };
   }
 
   private spawnPipe(x: number, level = this.spawnLevel()) {
     const margin = 70;
-    const gap = level.gap;
-    const lo = margin + gap / 2;
-    const hi = GROUND_Y - margin - gap / 2;
+    const lo = margin + level.gap / 2;
+    const hi = GROUND_Y - margin - level.gap / 2;
     const prev = this.pipes[this.pipes.length - 1];
     let center = lo + Math.random() * (hi - lo);
     if (prev) {
-      // How far a bird cruising at mid-gap can move in the open air between the two pipes.
-      const slack = gap / 2 - HIT_R - REACH_MARGIN;
-      // Down: it just stops flapping and falls.
-      let vy = 0;
-      let fall = 0;
-      for (let i = 0; i < (level.air - REACTION / 2) / STEP; i++) {
-        vy = Math.min(MAX_FALL, vy + GRAVITY * STEP * BIRD_TIME);
-        fall += vy * STEP * BIRD_TIME;
-      }
-      // Up: it keeps falling for REACTION, then climbs one flap per FLAP_PERIOD.
-      const tf = FLAP_PERIOD * BIRD_TIME;
-      const climbRate = -(FLAP_VY * tf + (GRAVITY * tf * tf) / 2) / FLAP_PERIOD;
-      const tr = REACTION * BIRD_TIME;
-      const rise = climbRate * (level.air - REACTION) - (GRAVITY * tr * tr) / 2;
-      // The level decides how much of that reach this pipe demands, in a random direction.
+      // The level decides how much of the bird's reach this pipe demands, in a random direction.
+      const reach = this.reach(level);
       const share = level.climb[0] + Math.random() * (level.climb[1] - level.climb[0]);
       const prevCenter = (prev.gapTop + prev.gapBottom) / 2;
-      const up = prevCenter - share * (slack + rise);
-      const down = prevCenter + share * (slack + fall);
+      const up = prevCenter - share * reach.up;
+      const down = prevCenter + share * reach.down;
       const goUp = up < lo ? false : down > hi ? true : Math.random() < 0.5;
       center = Math.max(lo, Math.min(hi, goUp ? up : down));
     }
-    this.pipes.push({ x, gapTop: center - gap / 2, gapBottom: center + gap / 2, passed: false });
+    this.pipes.push({ x, gapTop: center - level.gap / 2, gapBottom: center + level.gap / 2, passed: false });
   }
 
   /** The level the run will have reached by the time a pipe spawned now gets to the bird. */
@@ -245,11 +247,11 @@ export class Game {
     for (const p of this.puffs) p.age += dt;
     this.puffs = this.puffs.filter((p) => p.age < 0.6);
 
-    const db = dt * BIRD_TIME;
     if (this.dead) {
       this.deadFor += dt / this.speed; // restart delay is wall-clock, not game-speed
-      this.birdVy += GRAVITY * db;
-      this.birdY = Math.min(GROUND_Y - BIRD_R, this.birdY + this.birdVy * db);
+      // The body drops to the ground, with no terminal velocity.
+      this.birdVy += GRAVITY * dt * BIRD_TIME;
+      this.birdY = Math.min(GROUND_Y - BIRD_R, this.birdY + this.birdVy * dt * BIRD_TIME);
       if (this.deadFor * 1000 >= RESTART_MS) {
         this.reset();
         this.events.onRestart?.();
@@ -261,12 +263,7 @@ export class Game {
     this.pace += (this.levelAt(this.score).pace - this.pace) * Math.min(1, dt * 2);
     const dx = PIPE_SPEED * this.pace * dt;
     this.scroll += dx;
-    this.birdVy = Math.min(MAX_FALL, this.birdVy + GRAVITY * db);
-    this.birdY += this.birdVy * db;
-    if (this.birdY < BIRD_R) {
-      this.birdY = BIRD_R;
-      this.birdVy = Math.max(0, this.birdVy);
-    }
+    [this.birdY, this.birdVy] = fall(this.birdY, this.birdVy, dt);
 
     for (const p of this.pipes) {
       p.x -= dx;
@@ -293,13 +290,11 @@ export class Game {
 
   private collides() {
     if (this.birdY + BIRD_R >= GROUND_Y) return true;
-    const r = HIT_R;
-    for (const p of this.pipes) {
-      if (BIRD_X + r > p.x && BIRD_X - r < p.x + PIPE_W) {
-        if (this.birdY - r < p.gapTop || this.birdY + r > p.gapBottom) return true;
-      }
-    }
-    return false;
+    return this.pipes.some(
+      (p) =>
+        BIRD_X + HIT_R > p.x && BIRD_X - HIT_R < p.x + PIPE_W &&
+        (this.birdY - HIT_R < p.gapTop || this.birdY + HIT_R > p.gapBottom),
+    );
   }
 
   // ---------------------------------------------------------------- render

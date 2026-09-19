@@ -52,7 +52,6 @@ export class Session {
   roundTripEma = 280; // ms, running estimate of how stale a decision is when it lands
 
   startedAt = performance.now();
-  private playedBase = 0;
   startedIso = new Date().toISOString();
   decisions: Decision[] = [];
   errors: ApiError[] = [];
@@ -71,6 +70,7 @@ export class Session {
   model = "";
 
   private listeners = new Set<() => void>();
+  private playedBase = 0; // game.playedMs when the current stats began
   private version = 0;
   private gen = 0; // bumping this retires any loop still awaiting a response
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -150,18 +150,20 @@ export class Session {
     return count / (span / 1000);
   }
 
-  /** Called when the user starts the first run, so runtime doesn't count time spent on the ready screen. */
+  /** Called when the user starts the first run, so nothing counts time spent on the ready screen. */
   beginRun() {
-    this.startedAt = performance.now();
-    this.playedBase = this.game.playedMs;
-    this.startedIso = new Date().toISOString();
+    this.markStart();
     this.emit();
   }
 
-  resetStats() {
+  private markStart() {
     this.startedAt = performance.now();
     this.playedBase = this.game.playedMs;
     this.startedIso = new Date().toISOString();
+  }
+
+  resetStats() {
+    this.markStart();
     this.decisions = [];
     this.errors = [];
     this.flaps = this.waits = this.latencySum = this.roundTripSum = this.inputTokens = this.outputTokens = 0;
