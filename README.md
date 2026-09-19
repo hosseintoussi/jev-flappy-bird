@@ -95,3 +95,13 @@ src/App.tsx       layout, telemetry panel, stream, debug drawer
 ```
 
 Recording tip: the game and panel form one block centered in the window (about 950×720). Crop to it, and the debug drawer stays out of frame.
+
+## Contributing
+
+Issues and pull requests are welcome. `npm run build` (typecheck + production build) is what CI runs and needs no API key. Running the game itself needs your own TypeSafe key in `.env`, which is git-ignored; never commit it.
+
+The one rule of the demo: app code must not play the game. Changes to what Jev is asked (`src/question.ts`) or shown (`observe()` in `src/game.ts`) are fair; thresholds, fallbacks or any local flap logic are not.
+
+## License
+
+[MIT](LICENSE)

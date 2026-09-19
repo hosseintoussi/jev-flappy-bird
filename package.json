@@ -2,6 +2,20 @@
   "name": "jev-plays-flappy-bird",
   "private": true,
   "version": "0.1.0",
+  "description": "A live demo of TypeSafe's Jev (a System One model) playing Flappy Bird with one flap-or-wait decision every ~280ms.",
+  "license": "MIT",
+  "keywords": [
+    "flappy-bird",
+    "typesafe",
+    "jev",
+    "system-one",
+    "demo",
+    "vite",
+    "react"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -4,3 +4,7 @@ dist
 .env.local
 *.log
 .DS_Store
+.env.*.local
+.vscode
+.idea
+.claude/settings.local.json
