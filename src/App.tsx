@@ -53,8 +53,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // togglePause only touches game and session, which never change.
-  }, [game, session]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [game, session]);
 
   const restart = () => {
     game.reset();

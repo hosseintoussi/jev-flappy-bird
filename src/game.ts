@@ -1,6 +1,5 @@
-// Minimal Flappy Bird: physics, pipes, collisions, canvas rendering.
-// Nothing in this file decides when to flap. The only input is flap(),
-// which the Jev controller calls once per FLAP response.
+// Flappy Bird: physics, pipes, collisions, canvas rendering.
+// Nothing in this file decides when to flap. The only input is flap().
 
 export const W = 480;
 export const H = 720;
@@ -51,7 +50,7 @@ interface Pipe {
   passed: boolean;
 }
 
-/** What Jev is shown: plain measurements of one frame (see observe for which one). No advice. */
+/** What Jev is shown: measurements only, never advice. */
 export interface Observation {
   bird: {
     y: number;
@@ -113,7 +112,6 @@ export class Game {
     this.spawnPipe(W + 140);
   }
 
-  /** One flap impulse. Called exactly once per FLAP decision from Jev. */
   flap() {
     if (this.dead || this.paused) return;
     this.birdVy = FLAP_VY;
@@ -225,7 +223,7 @@ export class Game {
     const prev = this.pipes[this.pipes.length - 1];
     let center = lo + Math.random() * (hi - lo);
     if (prev) {
-      // The level decides how much of the bird's reach this pipe demands, in a random direction.
+      // Demand a share of the bird's reach, in a random direction.
       const reach = this.reach(level);
       const share = level.climb[0] + Math.random() * (level.climb[1] - level.climb[0]);
       const prevCenter = (prev.gapTop + prev.gapBottom) / 2;
@@ -297,10 +295,7 @@ export class Game {
     );
   }
 
-  // ---------------------------------------------------------------- render
-
   render(ctx: CanvasRenderingContext2D) {
-    // sky
     const sky = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
     sky.addColorStop(0, "#2b6cf0");
     sky.addColorStop(0.55, "#58b8f5");

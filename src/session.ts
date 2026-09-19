@@ -1,5 +1,4 @@
 // The Jev decision loop and everything recorded about it.
-// Flow: observe game -> POST /api/decide -> Jev's Choice (FLAP | WAIT) -> game.flap() at most once.
 // There is no local policy. If Jev does not answer, nothing flaps.
 
 import type { Game, Observation } from "./game";
@@ -19,9 +18,9 @@ export interface Decision {
   state: Observation;
   leadMs: number; // how far ahead of "now" the state was measured (0 = latency lead off)
   action: Action;
-  probabilities: Record<string, number>; // Jev's probability per option
-  pFlap: number; // probabilities.FLAP
-  confidence: number; // Jev's own confidence in the chosen option
+  probabilities: Record<string, number>;
+  pFlap: number;
+  confidence: number;
   jevLatencyMs: number; // measured on our server around the SDK call
   roundTripMs: number; // browser -> local server -> Jev -> back
   inputTokens: number;
@@ -98,8 +97,6 @@ export class Session {
     };
   }
 
-  // ------------------------------------------------------------ store api
-
   subscribe = (fn: () => void) => {
     this.listeners.add(fn);
     return () => void this.listeners.delete(fn);
@@ -137,7 +134,6 @@ export class Session {
   get estCostUsd() {
     return this.inputTokens * USD_PER_INPUT_TOKEN;
   }
-  /** Spend rate so far, scaled to an hour of play. */
   get estCostPerHourUsd() {
     return this.runtimeMs > 5000 ? (this.estCostUsd / this.runtimeMs) * 3_600_000 : 0;
   }
@@ -173,8 +169,6 @@ export class Session {
     this.lastError = null;
     this.emit();
   }
-
-  // -------------------------------------------------------- decision loop
 
   start() {
     void this.loop(++this.gen);
@@ -227,12 +221,11 @@ export class Session {
         return false;
       }
 
-      // Jev's own choice, used as returned. No threshold, no post-processing.
       const action: Action = body.choice === "FLAP" ? "FLAP" : "WAIT";
       const pFlap: number = body.probabilities?.FLAP ?? 0;
       // Apply only if this is still the same life the state was observed in.
       const applied = !this.game.dead && !this.game.paused && attempt === this.attempt;
-      if (applied && action === "FLAP") this.game.flap(); // exactly one impulse per FLAP response
+      if (applied && action === "FLAP") this.game.flap();
 
       const now = performance.now();
       this.roundTripEma += (Math.min(now - began, 1000) - this.roundTripEma) * 0.2;
@@ -280,15 +273,13 @@ export class Session {
     this.emit();
   }
 
-  // --------------------------------------------------------------- export
-
   exportJson() {
     return JSON.stringify(
       {
         app: "Jev Plays Flappy Bird",
         exportedAt: new Date().toISOString(),
         sessionStartedAt: this.startedIso,
-        runtimeMs: Math.round(this.runtimeMs), // time actually playing; pauses excluded
+        runtimeMs: Math.round(this.runtimeMs),
         question: { type: "choice", ...FLAP_QUESTION },
         settings: this.settings,
         summary: {
