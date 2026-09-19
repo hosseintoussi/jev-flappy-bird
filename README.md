@@ -2,6 +2,8 @@
 
 A live demo of [TypeSafe](https://docs.typesafe.ai)'s **Jev** model playing Flappy Bird.
 
+![Jev playing Flappy Bird, with its live decisions, latency, tokens and cost shown beside the game](docs/demo.gif)
+
 About three times a second, the game asks Jev one question: flap or wait? Jev answers, and the bird does what it says. Nothing else controls the bird. If Jev stops answering, the bird falls.
 
 ```
