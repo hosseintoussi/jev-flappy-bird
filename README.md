@@ -120,7 +120,7 @@ Recording tip: the game and panel sit together in the middle of the window, abou
 
 Issues and pull requests are welcome.
 
-`npm run build` checks types and builds the app. CI runs the same command, and it needs no API key. To run the game you need your own TypeSafe key in `.env`. Never commit it.
+`npm run build` checks types and builds the app. It needs no API key, so run it before opening a pull request. To run the game you need your own TypeSafe key in `.env`. Never commit it.
 
 One rule: **app code must not play the game.** Changing what Jev is asked or shown is fine. Thresholds, fallbacks, or any local flap logic are not.
 
