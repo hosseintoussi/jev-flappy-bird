@@ -3,7 +3,9 @@ import { Game, H, W } from "./game";
 import { Session, type Decision } from "./session";
 
 const fmtInt = (n: number) => Math.round(n).toLocaleString("en-US");
-const fmtMs = (n: number | undefined) => (n == null ? "—" : `${Math.round(n)}ms`);
+const fmtMs = (n: number | null | undefined) => (n == null ? "—" : `${Math.round(n)}ms`);
+// Decisions arrive every ~50ms. A flap stays on the big readout this long so it can be seen.
+const FLAP_HOLD_MS = 220;
 const fmtPct = (p: number) => `${Math.round(p * 100)}%`;
 const chosenP = (d: Decision) => d.probabilities?.[d.action] ?? (d.action === "FLAP" ? d.pFlap : 1 - d.pFlap);
 // Cost is tiny per decision, so keep enough digits to watch it move.
@@ -72,6 +74,8 @@ export default function App() {
   };
 
   const last = session.last;
+  const flap = session.lastFlap;
+  const shown = flap && performance.now() - flap.t < FLAP_HOLD_MS ? flap : last;
 
   return (
     <div className="page">
@@ -94,16 +98,18 @@ export default function App() {
             <div className="error-line">{session.lastError.message} — no fallback player; the bird gets no input.</div>
           )}
 
-          <Hero last={last} offline={session.offline} />
+          <Hero last={shown} offline={session.offline} />
 
           {showTelemetry && (
             <>
               <StatGroup label="Latency">
-                <Stat label="Jev, last" value={fmtMs(last?.jevLatencyMs)} strong />
-                <Stat label="Jev, avg" value={session.total ? fmtMs(session.avgLatency) : "—"} strong />
-                <Stat label="Jev, p95" value={session.total ? fmtMs(session.p95Latency) : "—"} />
+                <Stat label="Decisions / sec" value={session.decisionsPerSecond().toFixed(1)} strong />
+                <Stat label="Jev, avg" value={session.jevCount ? fmtMs(session.avgJev) : "—"} strong />
+                <Stat label="In flight" value={String(session.inFlight)} />
+                <Stat label="Jev, p95" value={session.jevCount ? fmtMs(session.p95Jev) : "—"} />
                 <Stat label="Round trip, avg" value={session.total ? fmtMs(session.avgRoundTrip) : "—"} />
-                <Stat label="Decisions / sec" value={session.decisionsPerSecond().toFixed(1)} />
+                <Stat label="Network, avg" value={session.jevCount ? fmtMs(session.avgNetwork) : "—"} />
+                <Stat label="Superseded" value={fmtInt(session.superseded)} />
                 <Stat label="API errors" value={fmtInt(session.errors.length)} bad={session.errors.length > 0} />
               </StatGroup>
               <StatGroup label={`Tokens & cost${session.model ? ` · ${session.model}` : ""}`}>
@@ -135,7 +141,7 @@ export default function App() {
           <label>
             <span>Decision interval · {session.settings.intervalMs}ms</span>
             <input
-              type="range" min={20} max={1000} step={10}
+              type="range" min={30} max={1000} step={10}
               value={session.settings.intervalMs}
               onChange={(e) => { session.settings.intervalMs = Number(e.target.value); rerender(); }}
             />
@@ -162,7 +168,7 @@ export default function App() {
             <input type="checkbox" checked={showStream} onChange={(e) => setShowStream(e.target.checked)} />
             Decision stream
           </label>
-          <label className="check" title="Over the first 30 pipes the scroll goes from 1.3× to 1.9×, the pipes move closer together, and each height change leaves the bird less time. Resets on death. Off = stay at the starting level.">
+          <label className="check" title="Over the first 30 pipes the scroll goes from 4.0× to 4.6×, the gaps get smaller, and each height change leaves the bird less time. Resets on death. Off = stay at the starting level.">
             <input type="checkbox" checked={game.ramp} onChange={(e) => { game.ramp = e.target.checked; rerender(); }} />
             Difficulty ramp
           </label>
@@ -232,7 +238,8 @@ function Hero({ last, offline }: { last: Decision | undefined; offline: boolean 
         Jev decides <span className="arrow">→</span>
       </div>
       <div className="hero-line">
-        <div key={last.n} className="hero-word">{last.action}</div>
+        {/* Pops once per flap, not on every WAIT in a run of them. */}
+        <div key={flap ? last.n : "wait"} className="hero-word">{last.action}</div>
         <div className="hero-pct">{fmtPct(chosenP(last))}</div>
       </div>
       {/* Bar position is Jev's probability for FLAP. Left of centre = WAIT, right = FLAP. */}
@@ -274,12 +281,12 @@ function Stream({ decisions }: { decisions: Decision[] }) {
       <div className="label">Recent decisions</div>
       <div className="stream-rows">
         {recent.map((d) => (
-          <div key={d.n} className={`stream-row ${d.action === "FLAP" ? "is-flap" : ""}`}>
+          <div key={d.n} className={`stream-row ${d.action === "FLAP" ? "is-flap" : ""} ${d.superseded ? "is-superseded" : ""}`}>
             <span className="c-n">{d.n}</span>
             <span className="c-a">{d.action}</span>
             <span className="c-bar"><i style={{ width: `${chosenP(d) * 100}%` }} /></span>
             <span className="c-p">{fmtPct(chosenP(d))}</span>
-            <span className="c-l">{fmtMs(d.jevLatencyMs)}</span>
+            <span className="c-l">{fmtMs(d.jevMs ?? d.apiMs)}</span>
           </div>
         ))}
       </div>
