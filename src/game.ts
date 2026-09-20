@@ -6,29 +6,36 @@ export const H = 720;
 const GROUND_Y = 650;
 const BIRD_X = 140;
 const BIRD_R = 15;
-const GRAVITY = 900; // px/s^2
-const FLAP_VY = -300; // px/s
-// The bird's vertical physics run on a slower clock than the scrolling world, so
-// pipes can move fast while each flap still lasts long enough for a ~280ms decision to matter.
-const BIRD_TIME = 0.5;
-// Terminal velocity, like the original. Low enough that one decision period of falling
-// (~45px) cannot carry the bird from mid-gap through the bottom of the smallest gap.
-const MAX_FALL = 300; // px/s
+// A flap lifts the bird ~50px. Strong gravity makes that quick (up and back in ~0.55s), which
+// is what lets a bird that has just flapped still drop to a lower gap at top speed.
+const GRAVITY = 1400; // px/s^2
+const FLAP_VY = -375; // px/s
+// Clock for the bird's vertical physics. 1 = real time, close to the original game. It was 0.5
+// when decisions landed ~280ms apart: a bird this quick needs the ~50ms spacing they have now.
+const BIRD_TIME = 1;
+// Terminal velocity, like the original. One decision period of falling is ~20px.
+const MAX_FALL = 420; // px/s
 const PIPE_SPEED = 130; // px/s at pace 1
 const PIPE_W = 76;
 const HIT_R = BIRD_R - 2; // slightly forgiving hitbox
 // Difficulty: every pipe passed moves the run from START toward END over RAMP_PIPES pipes.
-// The scroll speeds up, the pipes close in on each other, the gaps get a little smaller, and
+// The scroll speeds up, the gaps get a little smaller, and
 // each gap demands more of a climb or drop from the one before it. The bird's vertical physics
 // never change, so how far it can move between two pipes is fixed by the time in the open air
-// between them, which faster and closer pipes cut from ~1.4s to ~0.8s. `climb` is the share of
+// between them, which faster and closer pipes cut from ~0.55s to ~0.45s. `climb` is the share of
 // that physical reach a pipe may demand: [least, most]. Near 1 the bird has to start moving as
-// soon as it clears a pipe and cannot afford a wasted decision.
+// soon as it clears a pipe and cannot afford a wasted decision. Above 1 it eats into the safety
+// margins the reach is sized with (REACH_MARGIN and the worst-case flap), so the top of the
+// ramp is meant to be survivable, not safe.
 const RAMP_PIPES = 30;
-const START = { pace: 1.3, spacing: 340, gap: 195, climb: [0.3, 0.55] }; // spacing: px pipe to pipe; gap: px tall
-const END = { pace: 1.9, spacing: 295, gap: 180, climb: [0.65, 0.95] };
-const FLAP_PERIOD = 0.3; // s between flaps when climbing, about one Jev round trip
-const REACTION = 0.35; // s before a climb can start
+const START = { pace: 4.0, spacing: 380, gap: 195, climb: [0.3, 0.55] }; // spacing: px pipe to pipe; gap: px tall
+const END = { pace: 4.6, spacing: 380, gap: 165, climb: [0.8, 1.1] };
+// s between flaps when climbing, about one Jev round trip: a flap changes the bird's path, so
+// the next usable answer is the first one asked after it.
+const FLAP_PERIOD = 0.3;
+// s before a climb can start. Short, because the state is measured where the answer will land:
+// the first answer about a pipe arrives as the bird clears the one before it.
+const REACTION = 0.1;
 const REACH_MARGIN = 20; // px kept clear of the gap edge when sizing gap offsets
 const RESTART_MS = 700;
 const STEP = 1 / 120; // s, fixed physics step
@@ -122,8 +129,8 @@ export class Game {
   /**
    * leadMs > 0 measures the frame as it will be leadMs of wall-clock time from now if the bird
    * is left alone, which is the moment a decision requested now can land. The scroll is
-   * constant and nothing else can flap in between (one request in flight), so this is the
-   * same measurement taken at the time it matters, not advice.
+   * constant, and if an earlier request flaps in between, the session discards this one. So
+   * this is the same measurement taken at the time it matters, not advice.
    */
   observe(words: boolean, leadMs = 0): Observation | null {
     if (this.dead) return null;
@@ -205,15 +212,16 @@ export class Game {
   private reach(level: Level) {
     const air = (level.spacing - PIPE_W - 2 * BIRD_R) / (PIPE_SPEED * level.pace); // s between pipes
     const slack = level.gap / 2 - HIT_R - REACH_MARGIN; // it may end up anywhere inside the next gap
-    // Down: it just stops flapping and falls.
-    let [y, vy] = [GROUND_Y, 0];
-    for (let t = air - REACTION / 2; t > 0; t -= STEP) [y, vy] = fall(y, vy, STEP);
+    // Down: the worst case flapped at mid-gap just as it cleared the pipe, so it is still going
+    // up. It stops flapping and falls.
+    let [y, vy] = [GROUND_Y, FLAP_VY];
+    for (let t = air; t > 0; t -= STEP) [y, vy] = fall(y, vy, STEP);
     // Up: it keeps falling for REACTION, then climbs one flap per FLAP_PERIOD.
     const tf = FLAP_PERIOD * BIRD_TIME;
     const climbRate = -(FLAP_VY * tf + (GRAVITY * tf * tf) / 2) / FLAP_PERIOD;
     const tr = REACTION * BIRD_TIME;
     const rise = climbRate * (air - REACTION) - (GRAVITY * tr * tr) / 2;
-    return { up: slack + rise, down: slack + (y - GROUND_Y) };
+    return { up: Math.max(0, slack + rise), down: Math.max(0, slack + (y - GROUND_Y)) };
   }
 
   private spawnPipe(x: number, level = this.spawnLevel()) {
@@ -272,11 +280,12 @@ export class Game {
       }
     }
     this.pipes = this.pipes.filter((p) => p.x + PIPE_W > -10);
-    // Spawn just off-screen, so a pipe never pops into view.
+    // Spawn well off-screen. With the latency lead, Jev is asked about a pipe one round trip
+    // before the bird clears the one in front of it, so that pipe has to exist by then.
     const last = this.pipes[this.pipes.length - 1];
     const level = this.spawnLevel();
     const next = last.x + level.spacing;
-    if (next <= W + 20) this.spawnPipe(next, level);
+    if (next <= W + 80) this.spawnPipe(next, level);
 
     if (this.collides()) {
       this.dead = true;

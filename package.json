@@ -2,7 +2,7 @@
   "name": "jev-plays-flappy-bird",
   "private": true,
   "version": "0.1.0",
-  "description": "A live demo of TypeSafe's Jev (a System One model) playing Flappy Bird with one flap-or-wait decision every ~280ms.",
+  "description": "A live demo of TypeSafe's Jev (a System One model) playing Flappy Bird with about twenty flap-or-wait decisions a second.",
   "license": "MIT",
   "keywords": [
     "flappy-bird",
@@ -26,7 +26,8 @@
   "dependencies": {
     "@typesafe-ai/sdk": "^0.6.0",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "undici": "^8.10.2"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",

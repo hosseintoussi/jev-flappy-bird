@@ -129,6 +129,8 @@ body {
 .stream-row .c-a { font-weight: 700; color: var(--text); }
 .stream-row.is-flap .c-a { color: var(--flap); }
 .stream-row .c-p, .stream-row .c-l { text-align: right; }
+.stream-row.is-superseded { opacity: 0.4; }
+.stream-row.is-superseded .c-a { text-decoration: line-through; }
 .c-bar { height: 4px; border-radius: 2px; background: #1a202c; overflow: hidden; }
 .c-bar i { display: block; height: 100%; background: var(--wait); opacity: 0.8; }
 .is-flap .c-bar i { background: var(--flap); }
